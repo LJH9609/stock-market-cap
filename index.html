@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yahoo Finance Market Cap Updater</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- ExcelJS (Replaced SheetJS to preserve formatting) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <!-- FontAwesome for UI Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+        }
+        .gradient-bg {
+            background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.15), transparent),
+                        radial-gradient(circle at bottom left, rgba(16, 185, 129, 0.1), transparent),
+                        #0f172a;
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen text-slate-100 flex flex-col justify-between">
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed top-5 right-5 z-50 transform translate-y-[-100px] opacity-0 transition-all duration-300 ease-out bg-slate-800 border-l-4 border-indigo-500 text-slate-100 p-4 rounded-r shadow-2xl max-w-md flex items-center gap-3">
+        <i id="toast-icon" class="fa-solid fa-circle-info text-indigo-400 text-lg"></i>
+        <p id="toast-message" class="text-sm font-medium"></p>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="container mx-auto px-4 py-10 max-w-5xl flex-grow">
+        <!-- Header -->
+        <header class="text-center mb-10">
+            <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/50 mb-4 shadow-inner">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span class="text-xs font-semibold tracking-wider text-emerald-400 uppercase">Automated Stock Analyst</span>
+            </div>
+            <h1 class="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">
+                Market Cap 자동 입력 & 정렬기
+            </h1>
+            <p class="mt-3 text-slate-400 max-w-xl mx-auto text-sm md:text-base leading-relaxed">
+                엑셀 파일을 업로드하면 실시간 시가총액(Market Cap)을 조회 후 채워 넣고,<br>
+                <strong class="text-indigo-300">연속된 티커 그룹 내에서 시가총액 기준 내림차순으로 자동 재정렬</strong>해 드립니다.
+            </p>
+        </header>
+
+        <!-- Grid Container -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            <!-- Left Side: Control Panel -->
+            <div class="lg:col-span-5 space-y-6">
+                <!-- API Key Settings -->
+                <div class="bg-slate-800/50 backdrop-blur-md border border-slate-700/80 rounded-2xl p-6 shadow-xl transition-all">
+                    <h2 class="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-bolt text-amber-400"></i> 환경 설정 (3.1 Lite 최적화)
+                    </h2>
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center">
+                            <label for="api-key-input" class="text-xs text-slate-400">Gemini API Key</label>
+                            <span id="key-status" class="text-[10px] text-indigo-400 font-medium">선택 사항</span>
+                        </div>
+                        <!-- 보안 경고 원인 제거: 하드코딩된 API 키를 삭제하고 빈칸으로 설정 -->
+                        <input type="password" id="api-key-input" value="" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors" placeholder="API 키 입력">
+                        <p class="text-[10px] text-slate-500 leading-relaxed">
+                            💡 제미나이(미리보기) 환경에서는 값을 비워두세요. 외부(깃허브)에서는 한 번만 입력하시면 자동 저장됩니다.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Dropzone Card -->
+                <div class="bg-slate-800/50 backdrop-blur-md border border-slate-700/80 rounded-2xl p-6 shadow-xl transition-all hover:border-slate-600">
+                    <h2 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <i class="fa-solid fa-file-excel text-emerald-400"></i> 1단계: 파일 업로드
+                    </h2>
+                    
+                    <div id="dropzone" class="border-2 border-dashed border-slate-600 hover:border-indigo-500 rounded-xl p-8 text-center cursor-pointer transition-colors bg-slate-900/40 group">
+                        <input type="file" id="file-input" accept=".xlsx, .xls" class="hidden">
+                        <div class="space-y-4">
+                            <div class="w-14 h-14 bg-slate-800 rounded-full flex items-center justify-center mx-auto group-hover:scale-110 transition-transform duration-200 border border-slate-700">
+                                <i class="fa-solid fa-cloud-arrow-up text-slate-400 group-hover:text-indigo-400 text-xl"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold text-slate-200">엑셀 파일을 드래그하여 놓거나 클릭하세요</p>
+                                <p class="text-xs text-slate-500 mt-1">지원 형식: .xlsx, .xls</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-4 border-t border-slate-700/50 flex items-center justify-between">
+                        <span class="text-xs text-slate-400">테스트용 파일이 필요하신가요?</span>
+                        <button id="download-demo" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 transition-colors">
+                            <i class="fa-solid fa-download"></i> 데모 엑셀 다운로드
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Status Panel -->
+                <div id="status-panel" class="hidden bg-slate-800/50 backdrop-blur-md border border-slate-700/80 rounded-2xl p-6 shadow-xl space-y-4">
+                    <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-gears text-indigo-400 animate-spin"></i> 작업 제어판
+                    </h2>
+                    
+                    <div class="bg-slate-900/60 rounded-xl p-4 border border-slate-700/30 text-xs space-y-2">
+                        <div class="flex justify-between"><span class="text-slate-400">파일명:</span> <span id="info-filename" class="font-semibold text-slate-200">-</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">감지된 그룹(섹터) 수:</span> <span id="info-total-groups" class="font-semibold text-slate-200">-</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">유효한 티커 수:</span> <span id="info-valid-tickers" class="font-semibold text-slate-200">-</span></div>
+                    </div>
+
+                    <button id="start-btn" class="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 transition-all active:scale-95">
+                        <i class="fa-solid fa-bolt"></i> 자동 수집 및 정렬 시작 (에러 방지 쾌속 모드)
+                    </button>
+
+                    <!-- Progress Bar -->
+                    <div id="progress-container" class="hidden space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span id="progress-text" class="text-slate-400">진행률</span>
+                            <span id="progress-percentage" class="font-semibold text-indigo-400">0%</span>
+                        </div>
+                        <div class="w-full bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                            <div id="progress-bar" class="bg-indigo-500 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Live Table & Console Panel -->
+            <div class="lg:col-span-7 flex flex-col space-y-6">
+                <!-- Preview Panel -->
+                <div class="bg-slate-800/30 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 flex-grow flex flex-col shadow-xl min-h-[400px]">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-table-list text-emerald-400"></i> 실시간 업데이트 프리뷰
+                        </h2>
+                        <button id="download-result-btn" disabled class="px-4 py-1.5 bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-not-allowed opacity-50">
+                            <i class="fa-solid fa-file-arrow-down"></i> 결과 다운로드
+                        </button>
+                    </div>
+
+                    <!-- Placeholder Screen -->
+                    <div id="preview-placeholder" class="flex-grow flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-700 rounded-xl bg-slate-900/20">
+                        <i class="fa-solid fa-inbox text-slate-600 text-4xl mb-3"></i>
+                        <p class="text-sm font-medium text-slate-400">데이터가 없습니다.</p>
+                        <p class="text-xs text-slate-500 mt-1">엑셀 파일을 등록하시면 실시간으로 분석 상태가 표시됩니다.</p>
+                    </div>
+
+                    <!-- Data Table -->
+                    <div id="preview-table-container" class="hidden flex-grow overflow-x-auto border border-slate-700 rounded-xl bg-slate-900/50">
+                        <table class="w-full text-sm text-left text-slate-300">
+                            <thead class="text-xs uppercase bg-slate-800/80 text-slate-400 border-b border-slate-700">
+                                <tr>
+                                    <th scope="col" class="px-4 py-3 text-center">그룹/행</th>
+                                    <th scope="col" class="px-4 py-3">티커 (D열)</th>
+                                    <th scope="col" class="px-4 py-3">시가총액 (E열)</th>
+                                    <th scope="col" class="px-4 py-3 text-right">상태</th>
+                                </tr>
+                            </thead>
+                            <tbody id="preview-table-body" class="divide-y divide-slate-800">
+                                <!-- Row template generated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Process Console -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-inner">
+                    <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                        <span>작업 로그</span>
+                        <button id="clear-console" class="hover:text-slate-300">지우기</button>
+                    </div>
+                    <div id="console" class="h-28 overflow-y-auto font-mono text-xs text-slate-400 space-y-1 scrollbar-thin">
+                        <div class="text-emerald-500/80">&gt; 시스템 준비 완료. 엑셀 파일을 올려주세요.</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-950/80 border-t border-slate-800/80 py-5 text-center text-xs text-slate-500">
+        <div class="container mx-auto px-4">
+            <p>© 2026 Yahoo Finance Stock Updater. All rights reserved.</p>
+            <p class="mt-1 text-slate-600">이 서비스는 실시간 구글 검색 API 연동(Gemini 3.1 Flash Lite - Rate Limiter Mode)으로 작동합니다.</p>
+        </div>
+    </footer>
+
+    <!-- JavaScript Application -->
+    <script>
+        // System variables
+        const apiKey = ""; 
+
+        // App States
+        let workbook = null;
+        let worksheet = null;
+        let tickerGroups = []; 
+        let detectedTickers = []; 
+        let processedData = {}; 
+
+        // UI Selectors
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const apiKeyInput = document.getElementById('api-key-input');
+        const keyStatus = document.getElementById('key-status');
+        const statusPanel = document.getElementById('status-panel');
+        const startBtn = document.getElementById('start-btn');
+        const downloadResultBtn = document.getElementById('download-result-btn');
+        const downloadDemoBtn = document.getElementById('download-demo');
+        const infoFilename = document.getElementById('info-filename');
+        const infoTotalGroups = document.getElementById('info-total-groups');
+        const infoValidTickers = document.getElementById('info-valid-tickers');
+        const progressBar = document.getElementById('progress-bar');
+        const progressPercentage = document.getElementById('progress-percentage');
+        const progressText = document.getElementById('progress-text');
+        const progressContainer = document.getElementById('progress-container');
+        const previewPlaceholder = document.getElementById('preview-placeholder');
+        const previewTableContainer = document.getElementById('preview-table-container');
+        const previewTableBody = document.getElementById('preview-table-body');
+        const consoleEl = document.getElementById('console');
+        const clearConsoleBtn = document.getElementById('clear-console');
+
+        // LocalStorage 연동
+        if (localStorage.getItem('user_gemini_api_key')) {
+            apiKeyInput.value = localStorage.getItem('user_gemini_api_key');
+            keyStatus.textContent = "키 저장됨 ✓";
+            keyStatus.className = "text-[10px] text-emerald-400 font-medium";
+        }
+
+        apiKeyInput.addEventListener('input', (e) => {
+            const val = e.target.value.trim();
+            if (val) {
+                localStorage.setItem('user_gemini_api_key', val);
+                keyStatus.textContent = "키 저장됨 ✓";
+                keyStatus.className = "text-[10px] text-emerald-400 font-medium";
+            } else {
+                localStorage.removeItem('user_gemini_api_key');
+                keyStatus.textContent = "선택 사항 (제미나이는 빈칸)";
+                keyStatus.className = "text-[10px] text-indigo-400 font-medium";
+            }
+        });
+
+        // Helper: 문자열 값을 숫자로 변환하여 정렬에 사용
+        function parseMarketCap(str) {
+            if (!str || str === "N/A" || str === "에러 발생") return -1;
+            let val = parseFloat(str.replace(/[^0-9.]/g, ''));
+            if (isNaN(val)) return -1;
+            
+            let upperStr = str.toUpperCase();
+            if (upperStr.includes('T')) val *= 1000000000000;
+            else if (upperStr.includes('B')) val *= 1000000000;
+            else if (upperStr.includes('M')) val *= 1000000;
+            
+            return val;
+        }
+
+        // Toast Helper
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMessage.textContent = message;
+            if (type === 'success') {
+                toast.className = toast.className.replace(/border-[a-z-0-9\/]+/g, '') + ' border-emerald-500';
+                toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-lg";
+            } else if (type === 'error') {
+                toast.className = toast.className.replace(/border-[a-z-0-9\/]+/g, '') + ' border-rose-500';
+                toastIcon.className = "fa-solid fa-circle-exclamation text-rose-400 text-lg";
+            } else {
+                toast.className = toast.className.replace(/border-[a-z-0-9\/]+/g, '') + ' border-indigo-500';
+                toastIcon.className = "fa-solid fa-circle-info text-indigo-400 text-lg";
+            }
+
+            toast.classList.remove('translate-y-[-100px]', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+            setTimeout(() => {
+                toast.classList.add('translate-y-[-100px]', 'opacity-0');
+                toast.classList.remove('translate-y-0', 'opacity-100');
+            }, 3500);
+        }
+
+        // Logger Helper
+        function logToConsole(message, type = 'info') {
+            const time = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+            let colorClass = 'text-slate-400';
+            if (type === 'success') colorClass = 'text-emerald-400 font-semibold';
+            if (type === 'error') colorClass = 'text-rose-400 font-semibold';
+            if (type === 'process') colorClass = 'text-indigo-300';
+
+            const logLine = document.createElement('div');
+            logLine.className = `${colorClass}`;
+            logLine.innerHTML = `<span class="text-slate-600">[${time}]</span> &gt; ${message}`;
+            consoleEl.appendChild(logLine);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        clearConsoleBtn.addEventListener('click', () => {
+            consoleEl.innerHTML = '<div class="text-slate-600">&gt; 로그가 지워졌습니다.</div>';
+        });
+
+        // 💎 핵심 로직: 완벽한 토큰 버킷(Token Bucket) 시스템 💎
+        // 15 RPM 한계선에 닿지 않도록 안전 마진을 두어 14.5 RPM(4.15초)마다 1개씩 처리 권한을 부여합니다.
+        class RateLimiter {
+            constructor(rpm) {
+                this.interval = (60 / rpm) * 1000; 
+                this.nextAllowedTime = Date.now();
+            }
+
+            async acquireToken() {
+                const now = Date.now();
+                if (now < this.nextAllowedTime) {
+                    const waitTime = this.nextAllowedTime - now;
+                    this.nextAllowedTime += this.interval;
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                } else {
+                    this.nextAllowedTime = now + this.interval;
+                }
+            }
+        }
+        
+        // 안전 마진 확보 (14.5 RPM = 약 4137ms)
+        const limiter = new RateLimiter(14.5); 
+
+        // 일반 백오프 엔진
+        async function fetchWithBackoff(url, options, maxRetries = 4, ticker = "") {
+            let delay = 3000;
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    // API 호출 직전에 반드시 토큰 버킷에서 권한을 얻고 출발! (429 에러 원천 차단)
+                    await limiter.acquireToken(); 
+                    
+                    const response = await fetch(url, options);
+                    if (response.ok) {
+                        return await response.json();
+                    }
+                    if (response.status === 429) {
+                        logToConsole(`[통신 지연] 구글 서버 한도 도달. ${delay/1000}초 후 자동 재시도... (${attempt}/${maxRetries})`, 'process');
+                        if (attempt === maxRetries) throw { status: 429, message: "사용량 한도 초과 지속" };
+                    } else {
+                        let errMessage = "통신 에러";
+                        try {
+                            const errData = await response.json();
+                            errMessage = errData.error?.message || errMessage;
+                        } catch(e) {}
+                        throw { status: response.status, message: errMessage };
+                    }
+                } catch (error) {
+                    if (error.status && error.status !== 429 && error.status < 500) {
+                        throw error;
+                    }
+                    if (attempt === maxRetries) throw error;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 1.5; 
+                }
+            }
+        }
+
+        // Gemini Search API 통신
+        async function fetchMarketCapFromGemini(ticker) {
+            const customKey = apiKeyInput.value.trim();
+            const isCanvas = (customKey === "");
+            
+            // 💎 제미나이 내부 환경과 깃허브 외부 환경 모두 3.1 Flash Lite로 완벽 통일 💎
+            // (기존에 남아있던 2.5 Flash 코드를 완전히 삭제했습니다)
+            const modelName = "gemini-3.1-flash-lite";
+            const searchTool = isCanvas ? { "google_search": {} } : { "googleSearch": {} };
+            const effectiveKey = customKey || apiKey; 
+            
+            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${effectiveKey}`;
+            
+            // 정확도 100%를 위해 1티커 1질문
+            const promptText = `Find the exact stock market capitalization value of ticker "${ticker}" from real-time financial portals like Yahoo Finance. Respond using the required json schema. Examples of valid marketCap formats are "2.818T", "510.3B", or "1.24B". Make sure it represents the exact current figure.`;
+
+            let payload = {
+                contents: [{ parts: [{ text: promptText }] }],
+                tools: [searchTool], 
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: { marketCap: { type: "STRING" } },
+                        required: ["marketCap"]
+                    }
+                }
+            };
+
+            let options = {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            };
+
+            try {
+                const data = await fetchWithBackoff(endpoint, options, 4, ticker);
+                let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!jsonText) throw new Error("Invalid response structure");
+                return JSON.parse(jsonText).marketCap || "N/A";
+            } catch (err) {
+                if (err.status === 400 && payload.tools) {
+                    delete payload.tools;
+                    options.body = JSON.stringify(payload);
+                    const retryData = await fetchWithBackoff(endpoint, options, 2, ticker);
+                    let jsonText = retryData.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!jsonText) throw new Error("Invalid response structure");
+                    return JSON.parse(jsonText).marketCap || "N/A";
+                }
+                throw new Error(err.message || err);
+            }
+        }
+
+        // Excel Reading Utility
+        function readExcelFile(file) {
+            logToConsole(`엑셀 파일 분석 중: ${file.name}...`, 'process');
+            const reader = new FileReader();
+            
+            reader.onload = async function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    workbook = new ExcelJS.Workbook();
+                    await workbook.xlsx.load(arrayBuffer);
+                    
+                    worksheet = workbook.worksheets[0]; 
+
+                    tickerGroups = [];
+                    detectedTickers = [];
+                    let currentGroup = null;
+
+                    worksheet.eachRow((row, rowNumber) => {
+                        let cellValue = row.getCell(4).value; 
+                        let tickerRaw = "";
+                        
+                        if (cellValue) {
+                            if (cellValue.richText) tickerRaw = cellValue.richText.map(rt => rt.text).join('');
+                            else if (cellValue.hyperlink) tickerRaw = cellValue.text ? cellValue.text.toString() : "";
+                            else if (cellValue.formula) tickerRaw = cellValue.result ? cellValue.result.toString() : "";
+                            else tickerRaw = cellValue.toString();
+                        }
+                        
+                        let tickerStr = String(tickerRaw).trim().toUpperCase();
+                        
+                        const containsKorean = /[ㄱ-ㅎ|ㅏ-ㅣ|가-힣]/.test(tickerStr);
+                        const isValidTicker = /^[A-Z0-9.-]+$/.test(tickerStr);
+
+                        if (tickerStr && !containsKorean && isValidTicker && tickerStr !== "SYMBOL" && tickerStr !== "티커") {
+                            if (!currentGroup) {
+                                currentGroup = { startRow: rowNumber, endRow: rowNumber, items: [], groupId: tickerGroups.length + 1 };
+                                tickerGroups.push(currentGroup);
+                            }
+                            
+                            const tickerItem = { rowIdx: rowNumber, ticker: tickerStr, groupId: currentGroup.groupId };
+                            currentGroup.endRow = rowNumber;
+                            currentGroup.items.push(tickerItem);
+                            detectedTickers.push(tickerItem);
+
+                        } else {
+                            currentGroup = null;
+                        }
+                    });
+
+                    infoFilename.textContent = file.name;
+                    infoTotalGroups.textContent = `${tickerGroups.length}개 그룹`;
+                    infoValidTickers.textContent = `${detectedTickers.length}개`;
+
+                    statusPanel.classList.remove('hidden');
+                    logToConsole(`${tickerGroups.length}개의 주식 그룹 구획과 총 ${detectedTickers.length}개의 티커를 파악했습니다.`, 'success');
+                    showToast('엑셀 파일 분석 완료', 'success');
+
+                    renderPreviewTable();
+
+                } catch (error) {
+                    logToConsole(`에러 발생: ${error.message}`, 'error');
+                    showToast('파일 처리 중 오류', 'error');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // Preview Render
+        function renderPreviewTable() {
+            previewPlaceholder.classList.add('hidden');
+            previewTableContainer.classList.remove('hidden');
+            previewTableBody.innerHTML = '';
+
+            detectedTickers.forEach((item) => {
+                const tr = document.createElement('tr');
+                tr.id = `row-${item.rowIdx}`;
+                tr.className = "hover:bg-slate-800/40 transition-colors";
+                
+                tr.innerHTML = `
+                    <td class="px-4 py-3 font-semibold text-center text-slate-500">G${item.groupId} / R${item.rowIdx}</td>
+                    <td class="px-4 py-3 font-medium text-slate-200">
+                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-xs">
+                            ${item.ticker}
+                        </span>
+                    </td>
+                    <td id="mcap-${item.rowIdx}" class="px-4 py-3 text-slate-400 italic">대기 중...</td>
+                    <td id="status-${item.rowIdx}" class="px-4 py-3 text-right">
+                        <span class="inline-flex items-center gap-1 text-xs text-amber-500">
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span> 대기
+                        </span>
+                    </td>
+                `;
+                previewTableBody.appendChild(tr);
+            });
+        }
+
+        // Processing Trigger (정밀 통제 병렬 엔진)
+        startBtn.addEventListener('click', async () => {
+            if (detectedTickers.length === 0) return;
+
+            progressContainer.classList.remove('hidden');
+            startBtn.disabled = true;
+            startBtn.className = "w-full py-3 bg-slate-700 text-slate-400 font-bold rounded-xl flex items-center justify-center gap-2 cursor-not-allowed";
+            
+            // 최대 5개의 파이프라인이 토큰을 기다리며 교대로 작동합니다. (속도 극대화)
+            const maxConcurrent = 5; 
+            logToConsole(`🚀 초정밀 통제형 엔진 가동! (15 RPM 한계를 타면서 가장 빠르게 진행합니다)...`, 'process');
+
+            let processedCount = 0;
+            const total = detectedTickers.length;
+            let currentIndex = 0;
+
+            const worker = async () => {
+                while (currentIndex < total) {
+                    const idx = currentIndex++;
+                    const item = detectedTickers[idx];
+                    const { rowIdx, ticker } = item;
+
+                    const statusCell = document.getElementById(`status-${rowIdx}`);
+                    const rowEl = document.getElementById(`row-${rowIdx}`);
+                    rowEl.classList.add('bg-indigo-950/20');
+                    statusCell.innerHTML = `<span class="inline-flex items-center gap-1 text-xs text-indigo-400"><i class="fa-solid fa-spinner animate-spin"></i> 대기 및 조회 중</span>`;
+
+                    try {
+                        const marketCap = await fetchMarketCapFromGemini(ticker);
+                        const mcapCell = document.getElementById(`mcap-${rowIdx}`);
+                        rowEl.classList.remove('bg-indigo-950/20');
+                        mcapCell.textContent = marketCap;
+                        mcapCell.className = "px-4 py-3 text-emerald-400 font-semibold";
+                        statusCell.innerHTML = `<span class="inline-flex items-center gap-1 text-xs text-emerald-400 font-semibold"><i class="fa-solid fa-check"></i> 완료</span>`;
+                        
+                        processedData[rowIdx] = marketCap;
+
+                    } catch (err) {
+                        const mcapCell = document.getElementById(`mcap-${rowIdx}`);
+                        rowEl.classList.remove('bg-indigo-950/20');
+                        mcapCell.textContent = "N/A";
+                        mcapCell.className = "px-4 py-3 text-rose-400 font-semibold";
+                        statusCell.innerHTML = `<span class="inline-flex items-center gap-1 text-xs text-rose-500"><i class="fa-solid fa-triangle-exclamation"></i> 에러</span>`;
+                        processedData[rowIdx] = "N/A";
+                        logToConsole(`[에러] ${ticker} 조회 실패: ${err.message}`, 'error');
+                    }
+
+                    processedCount++;
+                    const percentage = Math.round((processedCount / total) * 100);
+                    progressBar.style.width = `${percentage}%`;
+                    progressPercentage.textContent = `${percentage}%`;
+                    progressText.textContent = `${processedCount} / ${total} 개 완료`;
+                }
+            };
+
+            const workers = [];
+            for (let i = 0; i < maxConcurrent; i++) {
+                workers.push(worker());
+            }
+
+            await Promise.all(workers);
+
+            logToConsole('수집 작업 완료! 시가총액 내림차순 정렬 및 데이터 기록 중...', 'success');
+            
+            updateAndSortExcelData();
+
+            downloadResultBtn.disabled = false;
+            downloadResultBtn.className = "px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/10 cursor-pointer";
+        });
+
+        // 덮어쓰기 및 C열부터 끝까지 정렬 (ExcelJS 서식 보존)
+        function updateAndSortExcelData() {
+            try {
+                detectedTickers.forEach(item => {
+                    const valueToWrite = processedData[item.rowIdx] || "N/A";
+                    worksheet.getCell(item.rowIdx, 5).value = valueToWrite;
+                });
+
+                const maxCol = worksheet.columnCount;
+
+                tickerGroups.forEach(group => {
+                    if (group.items.length <= 1) return;
+
+                    let rowDataExtracted = group.items.map(item => {
+                        let row = worksheet.getRow(item.rowIdx);
+                        let mcapStr = processedData[item.rowIdx] || "N/A";
+                        let numValue = parseMarketCap(mcapStr);
+                        
+                        let cellDataList = [];
+                        
+                        for (let c = 3; c <= maxCol; c++) {
+                            let cell = row.getCell(c);
+                            let safeStyle = {};
+                            if (cell.style) {
+                                if (cell.style.font) safeStyle.font = cell.style.font;
+                                if (cell.style.fill) safeStyle.fill = cell.style.fill;
+                                if (cell.style.border) safeStyle.border = cell.style.border;
+                                if (cell.style.alignment) safeStyle.alignment = cell.style.alignment;
+                                if (cell.style.numFmt) safeStyle.numFmt = cell.style.numFmt;
+                            }
+
+                            cellDataList.push({
+                                col: c,
+                                value: cell.value,
+                                style: Object.keys(safeStyle).length > 0 ? safeStyle : null
+                            });
+                        }
+
+                        return {
+                            rowIdx: item.rowIdx,
+                            numValue: numValue,
+                            cellDataList: cellDataList
+                        };
+                    });
+
+                    // 시가총액 기준 내림차순 정렬
+                    rowDataExtracted.sort((a, b) => b.numValue - a.numValue);
+
+                    let currentTargetRowIdx = group.startRow;
+                    rowDataExtracted.forEach(sortedItem => {
+                        let targetRow = worksheet.getRow(currentTargetRowIdx);
+                        
+                        sortedItem.cellDataList.forEach(cd => {
+                            let cell = targetRow.getCell(cd.col);
+                            cell.value = cd.value;
+                            if (cd.style) cell.style = cd.style;
+                        });
+                        
+                        currentTargetRowIdx++;
+                    });
+                });
+
+                logToConsole('A열 서식을 보존하며 그룹 내 시가총액 정렬이 완벽하게 처리되었습니다.', 'success');
+                showToast('업데이트 및 정렬 완료', 'success');
+
+            } catch (err) {
+                logToConsole(`데이터 정렬 중 오류 발생: ${err.message}`, 'error');
+                showToast('정렬 중 오류 발생', 'error');
+            }
+        }
+
+        // Trigger Modified Excel File Download
+        downloadResultBtn.addEventListener('click', async () => {
+            if (!workbook) return;
+            try {
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                
+                const downloadLink = document.createElement("a");
+                downloadLink.href = URL.createObjectURL(blob);
+                
+                const originalName = fileInput.files[0]?.name || "portfolio.xlsx";
+                downloadLink.download = originalName; 
+                
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+
+                logToConsole('정렬이 완료된 파일을 원본 이름으로 다운로드합니다.', 'success');
+            } catch (err) {
+                logToConsole(`다운로드 중 에러: ${err.message}`, 'error');
+            }
+        });
+
+        // Demo Excel File Creator
+        downloadDemoBtn.addEventListener('click', async () => {
+            try {
+                const demoWorkbook = new ExcelJS.Workbook();
+                const demoSheet = demoWorkbook.addWorksheet("Stock List");
+                
+                demoSheet.addRow(["Group Name", "", "Company Name", "Symbol", "Market Cap"]);
+                demoSheet.addRows([
+                    ["빅테크 그룹", "", "Microsoft Corporation", "MSFT", ""],
+                    ["", "", "Apple Inc.", "AAPL", ""],
+                    ["", "", "NVIDIA Corporation", "NVDA", ""],
+                    ["", "", "", "", ""], 
+                    ["반도체 장비", "", "ASML 홀딩", "ASML", ""],
+                    ["", "", "어플라이드 머티리얼즈", "AMAT", ""]
+                ]);
+
+                demoSheet.mergeCells('A2:B4');
+                demoSheet.getCell('A2').value = '빅테크 (연속)';
+                demoSheet.getCell('A2').alignment = { vertical: 'middle', horizontal: 'center' };
+                demoSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE5B4' } };
+                
+                demoSheet.mergeCells('A6:B7');
+                demoSheet.getCell('A6').value = '장비주';
+                demoSheet.getCell('A6').alignment = { vertical: 'middle', horizontal: 'center' };
+
+                const buffer = await demoWorkbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "테스트_그룹핑_포트폴리오.xlsx";
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                logToConsole('정렬 기능이 포함된 데모 엑셀 파일을 다운로드했습니다.', 'success');
+            } catch (err) {
+                logToConsole(`데모 파일 생성 중 오류: ${err.message}`, 'error');
+            }
+        });
+
+        // Drag & Drop
+        dropzone.addEventListener('click', () => fileInput.click());
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-indigo-500', 'bg-slate-800/40'); });
+        dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('border-indigo-500', 'bg-slate-800/40'); });
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('border-indigo-500', 'bg-slate-800/40');
+            if (e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files;
+                readExcelFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) readExcelFile(e.target.files[0]);
+        });
+    </script>
+</body>
+</html>
